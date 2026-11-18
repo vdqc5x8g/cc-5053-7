@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modal Synthesis Percussion</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>Modal synthesis percussion</h1>
+  <div class="header-controls">
+    <label>Model
+      <select id="modelSelect"></select>
+    </label>
+    <button id="modelInfoBtn" type="button">model &amp; approximations</button>
+  </div>
+</header>
+
+<div id="modelInfo" class="hidden"></div>
+
+<main>
+  <section id="surfacePanel">
+    <canvas id="surface" width="560" height="440"></canvas>
+    <div class="hint">click the surface to strike it &mdash; position chooses
+      <em>which</em> modes ring, not just how loud</div>
+    <div id="selectedModeInfo">no mode selected &mdash; click a bar in the chart or a row in the table</div>
+  </section>
+
+  <section id="controlPanel">
+    <div class="controls">
+      <label>strike velocity <span id="velocityVal"></span>
+        <input id="velocity" type="range" min="0" max="1000" value="696">
+      </label>
+      <label>mallet contact time <span id="contactVal"></span>
+        <input id="contact" type="range" min="0" max="1000" value="435">
+      </label>
+      <label>damping scale <span id="dampingVal"></span>
+        <input id="damping" type="range" min="0" max="1000" value="394">
+      </label>
+      <label>duration <span id="durationVal"></span>
+        <input id="duration" type="range" min="0" max="1000" value="602">
+      </label>
+    </div>
+
+    <h2>Activated modes <span class="sub">(actual solver inputs from the last strike)</span></h2>
+    <canvas id="modeChart" width="560" height="180"></canvas>
+
+    <h2>Mode table <span class="sub">click a row to show its shape; solo renders that mode alone</span></h2>
+    <div id="modeListWrap">
+      <table id="modeList">
+        <thead>
+          <tr><th>#</th><th>mode</th><th>f [Hz]</th><th>&tau; [s]</th>
+              <th>&phi;(hit)</th><th>|&Delta;v| [m/s]</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <h2>Strike history <span class="sub">A/B the sounds</span></h2>
+    <div id="history"></div>
+
+    <div id="status"></div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
