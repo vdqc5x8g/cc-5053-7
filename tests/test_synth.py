@@ -11,7 +11,7 @@ import pytest
 
 from modal_synth import models
 from modal_synth.audio import to_wav_bytes
-from modal_synth.synth import Mallet, ModalInstrument
+from modal_synth.synth import HitEvent, Mallet, ModalEngine, ModalInstrument
 from spectral import fft_peaks, measure_decay_tau, spectral_centroid, band_energy
 
 FS = 44100.0
@@ -28,6 +28,32 @@ def make_instrument(model_id="steel_plate", damping_scale=1.0, mallet=None):
     )
 
 
+def strike_and_render(
+    inst,
+    x_m,
+    y_m,
+    velocity_m_s,
+    duration_s,
+    time_s=0.0,
+    solo_mode=None,
+    direction=1,
+    contact_time_s=None,
+):
+    engine = ModalEngine(inst)
+    ev = HitEvent(
+        position_m=(x_m, y_m),
+        time_s=time_s,
+        velocity_m_s=velocity_m_s,
+        direction=direction,
+        contact_time_s=(
+            inst.mallet.contact_time_s if contact_time_s is None else contact_time_s
+        ),
+        mallet_mass_kg=inst.mallet.mass_kg,
+    )
+    report = engine.submit(ev, only_mode=solo_mode)
+    return engine, report, engine.render_duration(duration_s)
+
+
 # ---------------------------------------------------------------------------
 # Hit mapping: position selects modes, not just volume
 # ---------------------------------------------------------------------------
@@ -37,9 +63,8 @@ def test_center_vs_edge_fundamental():
     """Mode (1,1) peaks at the plate center and nearly vanishes at a corner."""
     inst = make_instrument()
     a, b = inst.geometry[1], inst.geometry[2]
-    center = inst.strike(0.5 * a, 0.5 * b, 2.0)
-    inst.reset()
-    corner = inst.strike(0.05 * a, 0.05 * b, 2.0)
+    _, center, _ = strike_and_render(inst, 0.5 * a, 0.5 * b, 2.0, 0.1)
+    _, corner, _ = strike_and_render(inst, 0.05 * a, 0.05 * b, 2.0, 0.1)
     dv_center = abs(center.modes[0].delta_v_m_s)
     dv_corner = abs(corner.modes[0].delta_v_m_s)
     # phi(1,1) at corner = sin(0.05 pi)^2 ~ 0.0246 of center.
@@ -53,11 +78,8 @@ def test_edge_hit_excites_more_high_modes():
     """Spectral centroid of the rendered sound must rise for an edge hit."""
     inst = make_instrument()
     a, b = inst.geometry[1], inst.geometry[2]
-    inst.strike(0.5 * a, 0.5 * b, 2.0)
-    out_center = inst.render(1.0)
-    inst.reset()
-    inst.strike(0.06 * a, 0.07 * b, 2.0)
-    out_edge = inst.render(1.0)
+    _, _, out_center = strike_and_render(inst, 0.5 * a, 0.5 * b, 2.0, 1.0)
+    _, _, out_edge = strike_and_render(inst, 0.06 * a, 0.07 * b, 2.0, 1.0)
     c_center = spectral_centroid(out_center, FS)
     c_edge = spectral_centroid(out_edge, FS)
     assert c_edge > 1.5 * c_center
@@ -69,7 +91,7 @@ def test_hit_mapping_matches_mode_shape_values():
     inst = make_instrument(mallet=mallet)
     a, b = inst.geometry[1], inst.geometry[2]
     x, y, v = 0.37 * a, 0.41 * b, 2.5
-    report = inst.strike(x, y, v)
+    _, report, _ = strike_and_render(inst, x, y, v, 0.05)
     j = mallet.impulse_n_s(v)
     for em, mode in zip(report.modes, inst.modes):
         phi = float(mode.shape(x, y))
@@ -82,9 +104,8 @@ def test_bar_hit_position_selects_modes():
     """Free-free bar mode 2 has a node at mid-length: silent for center hits."""
     inst = make_instrument("wood_bar")
     length = inst.geometry[1]
-    center = inst.strike(0.5 * length, 0.0, 2.0)
-    inst.reset()
-    near_end = inst.strike(0.05 * length, 0.0, 2.0)
+    _, center, _ = strike_and_render(inst, 0.5 * length, 0.0, 2.0, 0.1)
+    _, near_end, _ = strike_and_render(inst, 0.05 * length, 0.0, 2.0, 0.1)
     dv2_center = abs(center.modes[1].delta_v_m_s)
     dv2_end = abs(near_end.modes[1].delta_v_m_s)
     assert dv2_center < 0.02 * dv2_end
@@ -101,11 +122,8 @@ def test_velocity_linear_scaling_with_rigid_mallet():
     """contact_time_s = 0 disables the mallet filter: exact linearity."""
     inst = make_instrument(mallet=Mallet(mass_kg=0.02, contact_time_s=0.0))
     a, b = inst.geometry[1], inst.geometry[2]
-    inst.strike(0.4 * a, 0.35 * b, 1.0)
-    out1 = inst.render(0.5)
-    inst.reset()
-    inst.strike(0.4 * a, 0.35 * b, 2.0)
-    out2 = inst.render(0.5)
+    _, _, out1 = strike_and_render(inst, 0.4 * a, 0.35 * b, 1.0, 0.5, contact_time_s=0.0)
+    _, _, out2 = strike_and_render(inst, 0.4 * a, 0.35 * b, 2.0, 0.5, contact_time_s=0.0)
     ratio = np.max(np.abs(out2)) / np.max(np.abs(out1))
     assert ratio == pytest.approx(2.0, rel=1e-9)
 
@@ -120,11 +138,8 @@ def test_harder_strike_shifts_spectrum_up():
     """
     inst = make_instrument(mallet=Mallet(mass_kg=0.02, contact_time_s=0.002))
     a, b = inst.geometry[1], inst.geometry[2]
-    inst.strike(0.4 * a, 0.35 * b, 0.2)
-    soft = inst.render(1.0)
-    inst.reset()
-    inst.strike(0.4 * a, 0.35 * b, 8.0)
-    hard = inst.render(1.0)
+    _, _, soft = strike_and_render(inst, 0.4 * a, 0.35 * b, 0.2, 1.0, contact_time_s=0.002)
+    _, _, hard = strike_and_render(inst, 0.4 * a, 0.35 * b, 8.0, 1.0, contact_time_s=0.002)
     f0 = inst.modes[0].frequency_hz
 
     def hi_lo_ratio(out):
@@ -157,8 +172,7 @@ def test_mallet_model_hertz_scaling():
 def test_rendered_spectrum_matches_declared_mode_frequencies():
     inst = make_instrument()
     a, b = inst.geometry[1], inst.geometry[2]
-    inst.strike(0.4 * a, 0.35 * b, 2.0)  # generic point: no low-mode nodes
-    out = inst.render(2.0)
+    _, _, out = strike_and_render(inst, 0.4 * a, 0.35 * b, 2.0, 2.0)
     peaks = fft_peaks(out, FS, n_peaks=12)
     peak_freqs = [p[0] for p in peaks]
     for mode in inst.modes[:6]:
@@ -172,8 +186,7 @@ def test_decay_time_matches_tau():
     """Aluminum bar, solo fundamental: measured envelope decay equals tau."""
     inst = make_instrument("aluminum_bar")
     length = inst.geometry[1]
-    inst.strike(0.3 * length, 0.0, 2.0, solo_mode=0)
-    out = inst.render(2.0)
+    _, _, out = strike_and_render(inst, 0.3 * length, 0.0, 2.0, 2.0, solo_mode=0)
     tau_expected = inst.modes[0].tau_s
     measured = measure_decay_tau(out, FS, inst.modes[0].frequency_hz, 0.2, 1.4, 0.3)
     assert measured == pytest.approx(tau_expected, rel=0.03)
@@ -183,8 +196,7 @@ def test_high_damping_stable_and_correct():
     """25x damping: tau/25, still stable, no divergence, correct decay."""
     inst = make_instrument("aluminum_bar", damping_scale=25.0)
     length = inst.geometry[1]
-    inst.strike(0.3 * length, 0.0, 3.0, solo_mode=0)
-    out = inst.render(1.0)
+    engine, _, out = strike_and_render(inst, 0.3 * length, 0.0, 3.0, 1.0, solo_mode=0)
     assert np.all(np.isfinite(out))
     tau_expected = inst.modes[0].tau_s
     assert tau_expected < 0.1  # genuinely fast decay being measured
@@ -193,6 +205,7 @@ def test_high_damping_stable_and_correct():
     # After 20 tau essentially nothing remains (no residue, no limit cycle).
     tail = np.max(np.abs(out[int(0.8 * FS) :]))
     assert tail < 1e-4 * np.max(np.abs(out))
+    assert engine.voice.max_pole_magnitude() <= 1.0 + 1e-15
 
 
 # ---------------------------------------------------------------------------
@@ -203,11 +216,10 @@ def test_high_damping_stable_and_correct():
 def test_output_bounded_by_theoretical_envelope():
     inst = make_instrument()
     a, b = inst.geometry[1], inst.geometry[2]
-    report = inst.strike(0.5 * a, 0.5 * b, 8.0)  # hardest supported hit
-    out = inst.render(2.0)
+    engine, report, out = strike_and_render(inst, 0.5 * a, 0.5 * b, 8.0, 2.0)
     bound = sum(
         abs(em.delta_v_m_s) * (1.0 + osc.alpha / osc.wd)
-        for em, osc in zip(report.modes, inst.oscillators)
+        for em, osc in zip(report.modes, engine.voice.oscillators)
         if osc.underdamped
     )
     assert np.max(np.abs(out)) <= bound * (1.0 + 1e-9)
@@ -216,8 +228,7 @@ def test_output_bounded_by_theoretical_envelope():
 def test_wav_normalization_never_clips():
     inst = make_instrument()
     a, b = inst.geometry[1], inst.geometry[2]
-    inst.strike(0.5 * a, 0.5 * b, 8.0)
-    out = inst.render(1.0)
+    _, _, out = strike_and_render(inst, 0.5 * a, 0.5 * b, 8.0, 1.0)
     peak_raw = float(np.max(np.abs(out)))
     wav, peak_before, gain = to_wav_bytes(out, int(FS))
     assert peak_before == peak_raw
@@ -229,8 +240,7 @@ def test_wav_normalization_never_clips():
 def test_solo_mode_isolates_single_mode():
     inst = make_instrument()
     a, b = inst.geometry[1], inst.geometry[2]
-    inst.strike(0.4 * a, 0.35 * b, 2.0, solo_mode=2)
-    out = inst.render(1.5)
+    _, _, out = strike_and_render(inst, 0.4 * a, 0.35 * b, 2.0, 1.5, solo_mode=2)
     f2 = inst.modes[2].frequency_hz
     f0 = inst.modes[0].frequency_hz
     e_solo = band_energy(out, FS, 0.9 * f2, 1.1 * f2)
@@ -241,9 +251,8 @@ def test_solo_mode_isolates_single_mode():
 def test_warning_when_linear_range_exceeded():
     inst = make_instrument()
     a, b = inst.geometry[1], inst.geometry[2]
-    hard = inst.strike(0.5 * a, 0.5 * b, 8.0)
+    _, hard, _ = strike_and_render(inst, 0.5 * a, 0.5 * b, 8.0, 0.1)
     # 2 mm plate, 8 m/s hardest hit: the honesty warning must fire.
     assert any("nonlinear" in w for w in hard.warnings)
-    inst.reset()
-    soft = inst.strike(0.5 * a, 0.5 * b, 0.5)
+    _, soft, _ = strike_and_render(inst, 0.5 * a, 0.5 * b, 0.5, 0.1)
     assert not soft.warnings

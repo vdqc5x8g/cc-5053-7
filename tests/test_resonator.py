@@ -140,3 +140,70 @@ def test_silent_oscillator_stays_exactly_silent():
     osc = ModalOscillator(440.0, 1.0, FS)
     out = osc.render(10000)
     assert np.all(out == 0.0)
+
+
+# ---------------------------------------------------------------------------
+# ModalVoice: sustained bank, block rendering, sample-timed impulses
+# ---------------------------------------------------------------------------
+
+
+class _Mode:
+    def __init__(self, f, tau):
+        self.frequency_hz = f
+        self.tau_s = tau
+
+
+def test_voice_block_render_matches_single_oscillator():
+    """The vectorized voice must equal the per-mode oscillator recursion."""
+    from modal_synth.resonator import ModalVoice
+
+    f, tau = 837.0, 0.4
+    voice = ModalVoice([_Mode(f, tau)], FS)
+    voice.schedule_impulse(0, 0, 1.0)
+    out = voice.render_block(5000)
+
+    osc = ModalOscillator(f, tau, FS)
+    osc.impulse(1.0)
+    ref = osc.render(5001)[:5000]
+    assert np.max(np.abs(out - ref)) < 1e-12 * max(1.0, np.max(np.abs(ref)))
+
+
+def test_voice_impulse_applied_at_requested_sample():
+    from modal_synth.resonator import ModalVoice
+
+    voice = ModalVoice([_Mode(1000.0, 1.0)], FS)
+    applied = voice.schedule_impulse(100.0, 0, 1.0)
+    assert applied == 100
+    out = voice.render_block(200)
+    assert np.all(out[:100] == 0.0)  # silent before the impulse
+    assert np.any(out[100:] != 0.0)
+
+
+def test_voice_block_size_invariance():
+    from modal_synth.resonator import ModalVoice
+
+    def run(block):
+        voice = ModalVoice([_Mode(440.0, 1.0), _Mode(1770.0, 0.3)], FS)
+        voice.schedule_impulse(0, 0, 1.0)
+        voice.schedule_impulse(500.5, 1, -0.7)
+        chunks = []
+        left = 4000
+        while left > 0:
+            n = min(block, left)
+            chunks.append(voice.render_block(n))
+            left -= n
+        return np.concatenate(chunks)
+
+    ref = run(4000)
+    for block in (1, 7, 64, 999):
+        assert np.max(np.abs(run(block) - ref)) < 1e-11 * max(1.0, np.max(np.abs(ref)))
+
+
+def test_voice_stems_match_total():
+    from modal_synth.resonator import ModalVoice
+
+    voice = ModalVoice([_Mode(300.0, 1.0), _Mode(900.0, 0.5)], FS)
+    voice.schedule_impulse(0, 0, 1.0)
+    voice.schedule_impulse(0, 1, 0.5)
+    total, stems = voice.render_block(2000, stem_modes=[0, 1])
+    assert np.max(np.abs((stems[0] + stems[1]) - total)) < 1e-12

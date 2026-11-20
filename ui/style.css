@@ -116,6 +116,39 @@ main {
 #history .entry:hover { border-color: var(--accent); }
 #history .entry .pos { color: var(--accent); }
 
+.evlist { display: flex; flex-direction: column; gap: 4px; }
+.evrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid #2c3542;
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.evrow.viewed { border-color: var(--accent2); }
+.evrow .idx { color: var(--accent2); font-weight: 600; min-width: 20px; }
+.evrow .pos { color: var(--accent); }
+.evrow .t { color: var(--dim); }
+.evrow button { padding: 1px 8px; font-size: 11.5px; }
+.row-actions { display: flex; gap: 12px; align-items: center; margin-top: 6px; }
+.dim { color: var(--dim); font-size: 12px; }
+
+.legend { display: flex; gap: 16px; margin: 4px 0 2px; font-size: 11.5px; color: var(--dim); }
+.legend .sw { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 2px; }
+
+.tag { font-size: 10.5px; padding: 0 5px; border-radius: 3px; }
+.tag.cancel { background: #4a2b2b; color: #ef9a9a; }
+.tag.add { background: #33401f; color: #9ccc65; }
+
+.readback { background: var(--panel); border-radius: 6px; padding: 6px 10px; }
+.readback table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.readback th, .readback td { padding: 2px 8px; text-align: right; border-bottom: 1px solid #232a35; }
+.readback th { color: var(--dim); font-weight: 600; }
+.readback .catnote { margin-top: 6px; font-size: 11.5px; color: var(--dim); }
+
 #status {
   margin-top: 12px;
   font-size: 12px;
